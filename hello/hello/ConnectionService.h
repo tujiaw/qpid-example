@@ -47,14 +47,16 @@ public:
         ResponseCallback cb;
     };
 
-    ConnectionService(const std::string &url, const std::string &sendAddr);
+    ConnectionService(const std::string &url);
     ConnectionService(const ConnectionService &) = delete;
     void operator=(const ConnectionService &) = delete;
     ~ConnectionService();
 
-    void AddHandler(const std::string &serverAddr, const ServerCallback &cb);
-    bool PostMsg(const QMsgPtr &msg, int second, const ResponseCallback &cb);
-    bool SendMsg(const Message &requestMsg, Message &responseMsg, int milliseconds = 1000);
+    void AddQueueServer(const std::string &serverAddr, const ServerCallback &cb);
+    void AddTopicServer(const std::string &serverAddr, const ServerCallback &cb);
+    bool PostMsg(const std::string &name, const QMsgPtr &msg, int second, const ResponseCallback &cb);
+    bool SendMsg(const std::string &name, const Message &requestMsg, Message &responseMsg, int milliseconds = 1000);
+    bool PublishMsg(const std::string &topic, const Message &msg);
 
 private:
     bool Open(const std::string& url);
@@ -62,14 +64,15 @@ private:
     void StartThread();
     void ReceiveRunning();
     void TimeoutRunning();
-    void HandlerRunning(const std::string &addr, const ServerCallback &cb);
+    void QueueServerRunning(const std::string &addr, const ServerCallback &cb);
+    void TopicServerRunning(const std::string &addr, const ServerCallback &cb);
+
+    Sender& GetSender(const std::string &name);
 
 private:
     std::unique_ptr<qpid::messaging::Connection> _connection;
-    std::string _requestAddr;
     bool _is_open;
     Session _session;
-    Sender _sender;
     Receiver _asyncReceiver;
     Receiver _syncReceiver;
 
@@ -78,5 +81,9 @@ private:
 
     std::mutex _requestCacheMutex;
     std::unordered_map<std::string, RequestInfo> _requestCache;
+
+    mutable std::mutex _senderMutex;
+    std::unordered_map<std::string, Sender> _senderCache;
+    Sender _emptySender;
 };
 

@@ -41,13 +41,12 @@ std::string NewMessageId()
 #endif
 }
 
-ConnectionService::ConnectionService(const std::string &url, const std::string &sendAddr)
+ConnectionService::ConnectionService(const std::string &url)
     : _connection(new Connection(url))
     , _is_open(false)
 {
     _connection->setOption("reconnect", true);
-    _connection->setOption("heartbeat", 5);
-    _requestAddr = sendAddr + "; {create:always, node:{type:queue}}";
+    _connection->setOption("heartbeat", 5);    
     Open(url);
 }
 
@@ -56,11 +55,19 @@ ConnectionService::~ConnectionService()
     Close();
 }
 
-void ConnectionService::AddHandler(const std::string &serverAddr, const ServerCallback &cb)
+void ConnectionService::AddQueueServer(const std::string &serverAddr, const ServerCallback &cb)
 {
     if (!serverAddr.empty() && cb) {
         std::string serverAddress = serverAddr + "; {create:always, node : {type:queue}}";
-        std::shared_ptr<std::thread> t(new std::thread(std::bind(&ConnectionService::HandlerRunning, this, serverAddress, cb)));
+        std::shared_ptr<std::thread> t(new std::thread(std::bind(&ConnectionService::QueueServerRunning, this, serverAddress, cb)));
+        _handlerThreadList.push_back(t);
+    }
+}
+
+void ConnectionService::AddTopicServer(const std::string &serverAddr, const ServerCallback &cb)
+{
+    if (!serverAddr.empty() && cb) {;
+        std::shared_ptr<std::thread> t(new std::thread(std::bind(&ConnectionService::TopicServerRunning, this, serverAddr, cb)));
         _handlerThreadList.push_back(t);
     }
 }
@@ -71,7 +78,6 @@ bool ConnectionService::Open(const std::string& url)
     try {
         _connection->open();
         _session = _connection->createSession();
-        _sender = _session.createSender(_requestAddr);
         _asyncReceiver = _session.createReceiver("#.ConnectionService");
         _syncReceiver = _session.createReceiver("#.ConnectionService");
     } catch (const std::exception& error) {
@@ -100,10 +106,16 @@ void ConnectionService::Close()
     }
 
     try {
-        _sender.close();
-        _asyncReceiver.close();
-        _syncReceiver.close();
-        _sender.close();
+        for (auto iter = _senderCache.begin(); iter != _senderCache.end(); ++iter) {
+            iter->second.close();
+        }
+
+        if (_asyncReceiver) {
+            _asyncReceiver.close();
+        }
+        if (_syncReceiver) {
+            _syncReceiver.close();
+        }
     } catch (const std::exception& error) {
         std::cerr << "ConnectionService::Close, error:" << error.what();
     }
@@ -145,7 +157,6 @@ void ConnectionService::ReceiveRunning()
                 }
                 _session.acknowledge();
             }
-            _session.sync();
         } catch (const std::exception& error) {
             std::cerr << "ConnectionService::ReceiveRunning error:" << error.what();
         }
@@ -184,7 +195,7 @@ void ConnectionService::TimeoutRunning()
     }
 }
 
-void ConnectionService::HandlerRunning(const std::string &addr, const ServerCallback &cb)
+void ConnectionService::QueueServerRunning(const std::string &addr, const ServerCallback &cb)
 {
     while (_is_open) {
         Session session = _connection->createSession();
@@ -210,7 +221,7 @@ void ConnectionService::HandlerRunning(const std::string &addr, const ServerCall
             session.sync();
         }
         catch (const std::exception &error) {
-            std::cerr << "ConnectionService::HandlerRunning error:" << error.what();
+            std::cerr << "ConnectionService::QueueServerRunning error:" << error.what();
         }
 
         try {
@@ -218,53 +229,105 @@ void ConnectionService::HandlerRunning(const std::string &addr, const ServerCall
             session.close();
         }
         catch (const std::exception &error) {
-            std::cerr << "HandlerRunning close error:" << error.what();
+            std::cerr << "QueueServerRunning close error:" << error.what();
         }
     }
 }
 
-bool ConnectionService::PostMsg(const QMsgPtr &msg, int second, const ResponseCallback &cb)
+void ConnectionService::TopicServerRunning(const std::string &addr, const ServerCallback &cb)
 {
-    if (!_connection->isOpen() || !msg) {
-        return false;
-    }
-
-    bool result = false;
-    msg->setMessageId(NewMessageId());
-    msg->setReplyTo(_asyncReceiver.getAddress());
-    try {
-        {
-            std::unique_lock<std::mutex> lock(_requestCacheMutex);
-            RequestInfo info(second, msg, cb);
-            _requestCache[msg->getMessageId()] = info;
+    Session session = _connection->createSession();
+    Receiver receiver = session.createReceiver(addr);
+    while (_is_open) {
+        try {
+            Message msg;
+            while (receiver.fetch(msg, Duration::SECOND)) {
+                Message reply;
+                cb(msg, reply);
+                session.acknowledge();
+            }
         }
-        _sender.send(*msg.get());
-        result = true;
-    } catch (const std::exception& error) {
-        std::cerr << "ConnectionService::PostMsg error:" << error.what();
+        catch (const std::exception &error) {
+            std::cerr << "ConnectionService::QueueServerRunning error:" << error.what();
+        }
     }
+}
 
+bool ConnectionService::PostMsg(const std::string &name, const QMsgPtr &msg, int second, const ResponseCallback &cb)
+{
+    bool result = false;
+    Sender &sender = GetSender(name);
+    if (sender) {
+        msg->setMessageId(NewMessageId());
+        msg->setReplyTo(_asyncReceiver.getAddress());
+        try {
+            {
+                std::unique_lock<std::mutex> lock(_requestCacheMutex);
+                RequestInfo info(second, msg, cb);
+                _requestCache[msg->getMessageId()] = info;
+            }
+            sender.send(*msg.get());
+            result = true;
+        }
+        catch (const std::exception& error) {
+            std::cerr << "ConnectionService::PostMsg error:" << error.what();
+        }
+    }
     return result;
 }
 
-bool ConnectionService::SendMsg(const Message &requestMsg, Message &responseMsg, int milliseconds)
+bool ConnectionService::SendMsg(const std::string &name, const Message &requestMsg, Message &responseMsg, int milliseconds)
 {
-    if (!_connection->isOpen()) {
-        return false;
-    }
-
     bool result = false;
-    Message &msg = const_cast<Message&>(requestMsg);
-    msg.setMessageId(NewMessageId());
-    msg.setReplyTo(_syncReceiver.getAddress());
-    try {
-        _sender.send(msg);
-        result = _syncReceiver.fetch(responseMsg, Duration(milliseconds));
-        _session.acknowledge(responseMsg);
+    Sender &sender = GetSender(name);
+    if (sender) {
+        Message &msg = const_cast<Message&>(requestMsg);
+        msg.setMessageId(NewMessageId());
+        msg.setReplyTo(_syncReceiver.getAddress());
+        try {
+            sender.send(msg);
+            result = _syncReceiver.fetch(responseMsg, Duration(milliseconds));
+            _session.acknowledge(responseMsg);
+        }
+        catch (const std::exception &error) {
+            std::cerr << "ConnectionService::SendMsg error : " << error.what();
+        }
     }
-    catch (const std::exception &error) {
-        std::cerr << "ConnectionService::SendMsg error : " << error.what();
+    return result;
+}
+
+bool ConnectionService::PublishMsg(const std::string &topic, const Message &msg)
+{
+    bool result = false;
+    Sender &sender = GetSender(topic);
+    if (sender) {
+        try {
+            sender.send(msg);
+            result = true;
+        }
+        catch (const std::exception &error) {
+            std::cerr << "ConnectionService::SendMsg error : " << error.what();
+        }
+    }
+    return result;
+}
+
+Sender& ConnectionService::GetSender(const std::string &name)
+{
+    std::unique_lock<std::mutex> lock(_senderMutex);
+    Sender &sender = _senderCache[name];
+    if (sender) {
+        return sender;
+    } else {
+        try {
+            Sender sender = _session.createSender(name);
+            _senderCache[name] = sender;
+            return _senderCache[name];
+        }
+        catch (const std::exception &error) {
+            std::cerr << "AddSender error:" << error.what();
+        }
     }
 
-    return result;
+    return _emptySender;
 }
