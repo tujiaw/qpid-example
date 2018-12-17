@@ -67,7 +67,7 @@ private:
     void QueueServerRunning(const std::string &addr, const ServerCallback &cb);
     void TopicServerRunning(const std::string &addr, const ServerCallback &cb);
 
-    Sender& GetSender(const std::string &name);
+    Sender& GetSender(const std::string &name, const std::string &nodeType);
 
 private:
     std::unique_ptr<qpid::messaging::Connection> _connection;

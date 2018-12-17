@@ -1,8 +1,4 @@
-#include <qpid/messaging/Connection.h>
-#include <qpid/messaging/Message.h>
-#include <qpid/messaging/Receiver.h>
-#include <qpid/messaging/Sender.h>
-#include <qpid/messaging/Session.h>
+
 #include "ConnectionService.h"
 
 #include <iostream>
@@ -16,17 +12,25 @@ int main()
     ConnectionService server("172.16.66.115:5672");
 
 #if 0
-    server.AddQueueServer("pingpong", [](const Message &msg, Message &reply) {
+    //server.AddQueueServer("pingpong", [](const Message &msg, Message &reply) {
+    //    std::cout << std::this_thread::get_id() << " msgid:" << msg.getMessageId() << ",reply:" << msg.getContent() << std::endl;
+    //    reply.setContent(msg.getContent());
+    //});
+
+    server.AddTopicServer("ningtotopic", [](const Message &msg, Message &reply) {
         std::cout << std::this_thread::get_id() << " msgid:" << msg.getMessageId() << ",reply:" << msg.getContent() << std::endl;
         reply.setContent(msg.getContent());
     });
 
 #else
     std::vector<int> postTimeoutList, sendTimeoutList;
-    for (int i = 0; i < 100; i++) {
+    int i = 0;
+    for (;;) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
         QMsgPtr msg(new Message());
-        msg->setContent(std::to_string(i));
-        //server.PostMsg("pingpong", msg, 13, [&](const QMsgPtr &request, const QMsgPtr &response) {
+        msg->setContent(std::to_string(++i));
+
+        //server.PostMsg("pingpong", msg, 5, [&](const QMsgPtr &request, const QMsgPtr &response) {
         //    if (response->getContentSize() > 0) {
         //        std::cout << "request:" << request->getContent() << ", response:" << response->getContent() << std::endl;
         //    } else {
@@ -34,16 +38,16 @@ int main()
         //    }
         //});
 
-        server.PublishMsg("ningtotopic; {create:always, node : {type: topic}}", *msg.get());
+        //std::cout << "publish msg:" << i << std::endl;
+        //server.PublishMsg("ningtotopic", *msg.get());
 
-        //Message responseMsg;
-        //if (server.SendMsg(*msg.get(), responseMsg)) {
-        //    std::cout << responseMsg.getContent() << std::endl;
-        //} else {
-        //    sendTimeoutList.push_back(i);
-        //}
+        Message responseMsg;
+        if (server.SendMsg("pingpong", *msg.get(), responseMsg)) {
+            std::cout << responseMsg.getContent() << std::endl;
+        } else {
+            sendTimeoutList.push_back(i);
+        }
     }
-
 
     system("pause");
     std::cout << "=====================================\n";

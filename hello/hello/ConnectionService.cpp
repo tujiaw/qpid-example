@@ -58,7 +58,7 @@ ConnectionService::~ConnectionService()
 void ConnectionService::AddQueueServer(const std::string &serverAddr, const ServerCallback &cb)
 {
     if (!serverAddr.empty() && cb) {
-        std::string serverAddress = serverAddr + "; {create:always, node : {type:queue}}";
+        std::string serverAddress = serverAddr + "; {create:always, node: {type:queue}}";
         std::shared_ptr<std::thread> t(new std::thread(std::bind(&ConnectionService::QueueServerRunning, this, serverAddress, cb)));
         _handlerThreadList.push_back(t);
     }
@@ -66,8 +66,9 @@ void ConnectionService::AddQueueServer(const std::string &serverAddr, const Serv
 
 void ConnectionService::AddTopicServer(const std::string &serverAddr, const ServerCallback &cb)
 {
-    if (!serverAddr.empty() && cb) {;
-        std::shared_ptr<std::thread> t(new std::thread(std::bind(&ConnectionService::TopicServerRunning, this, serverAddr, cb)));
+    if (!serverAddr.empty() && cb) {
+        std::string serverAddress = serverAddr + "; {create:always, node: {type:topic}}";
+        std::shared_ptr<std::thread> t(new std::thread(std::bind(&ConnectionService::TopicServerRunning, this, serverAddress, cb)));
         _handlerThreadList.push_back(t);
     }
 }
@@ -78,8 +79,8 @@ bool ConnectionService::Open(const std::string& url)
     try {
         _connection->open();
         _session = _connection->createSession();
-        _asyncReceiver = _session.createReceiver("#.ConnectionService");
-        _syncReceiver = _session.createReceiver("#.ConnectionService");
+        _asyncReceiver = _session.createReceiver("#.ConnectionService.AsyncReceiver");
+        _syncReceiver = _session.createReceiver("#.ConnectionService.SyncReceiver");
     } catch (const std::exception& error) {
         std::cerr << "ConnectionService::Open error:" << error.what();
     }
@@ -115,6 +116,9 @@ void ConnectionService::Close()
         }
         if (_syncReceiver) {
             _syncReceiver.close();
+        }
+        if (_session) {
+            _session.close();
         }
     } catch (const std::exception& error) {
         std::cerr << "ConnectionService::Close, error:" << error.what();
@@ -256,7 +260,7 @@ void ConnectionService::TopicServerRunning(const std::string &addr, const Server
 bool ConnectionService::PostMsg(const std::string &name, const QMsgPtr &msg, int second, const ResponseCallback &cb)
 {
     bool result = false;
-    Sender &sender = GetSender(name);
+    Sender &sender = GetSender(name, "queue");
     if (sender) {
         msg->setMessageId(NewMessageId());
         msg->setReplyTo(_asyncReceiver.getAddress());
@@ -279,7 +283,7 @@ bool ConnectionService::PostMsg(const std::string &name, const QMsgPtr &msg, int
 bool ConnectionService::SendMsg(const std::string &name, const Message &requestMsg, Message &responseMsg, int milliseconds)
 {
     bool result = false;
-    Sender &sender = GetSender(name);
+    Sender &sender = GetSender(name, "queue");
     if (sender) {
         Message &msg = const_cast<Message&>(requestMsg);
         msg.setMessageId(NewMessageId());
@@ -299,7 +303,7 @@ bool ConnectionService::SendMsg(const std::string &name, const Message &requestM
 bool ConnectionService::PublishMsg(const std::string &topic, const Message &msg)
 {
     bool result = false;
-    Sender &sender = GetSender(topic);
+    Sender &sender = GetSender(topic, "topic");
     if (sender) {
         try {
             sender.send(msg);
@@ -312,7 +316,7 @@ bool ConnectionService::PublishMsg(const std::string &topic, const Message &msg)
     return result;
 }
 
-Sender& ConnectionService::GetSender(const std::string &name)
+Sender& ConnectionService::GetSender(const std::string &name, const std::string &nodeType)
 {
     std::unique_lock<std::mutex> lock(_senderMutex);
     Sender &sender = _senderCache[name];
@@ -320,7 +324,17 @@ Sender& ConnectionService::GetSender(const std::string &name)
         return sender;
     } else {
         try {
-            Sender sender = _session.createSender(name);
+            std::string address = name;
+            if (nodeType == "queue") {
+                address += "; {create:always, node: {type:queue}}";
+            } else if (nodeType == "topic") {
+                address += "; {create:always, node: {type:topic}}";
+            } else {
+                std::cerr << "AddSender error, node type error:" << nodeType;
+                return _emptySender;
+            }
+
+            Sender sender = _session.createSender(address);
             _senderCache[name] = sender;
             return _senderCache[name];
         }
