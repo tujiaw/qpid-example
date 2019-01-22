@@ -1,20 +1,8 @@
 #include "ConnectionService.h"
 #include "qpid/messaging/Connection.h"
 #include "qpid/messaging/Address.h"
-
-#ifdef WIN32
-    #pragma comment(lib, "rpcrt4.lib")  // UuidCreate - Minimum supported OS Win 2000
-    #include <windows.h>
-    #include <iostream>
-#else
-    // uuid
-    #include <boost/uuid/uuid.hpp>
-    #include <boost/uuid/uuid_generators.hpp>
-    #include <boost/uuid/uuid_io.hpp>
-    #include <boost/locale/encoding.hpp>
-    #include <boost/date_time/posix_time/posix_time.hpp>  
-    #include <boost/thread/mutex.hpp>
-#endif
+#include "qpid/types/Uuid.h"
+#include <iostream>
 
 time_t GetCurrentTimeSec()
 {
@@ -23,22 +11,8 @@ time_t GetCurrentTimeSec()
 
 std::string NewMessageId()
 {
-#ifdef WIN32
-    UUID uuid;
-    UuidCreate(&uuid);
-    char *str;
-    UuidToStringA(&uuid, (RPC_CSTR*)&str);
-    std::string result(str);
-    RpcStringFreeA((RPC_CSTR*)&str);
-    return result;
-#else
-    static boost::uuids::random_generator rg;
-    static boost::mutex rg_mutex;
-    boost::mutex::scoped_lock lock(rg_mutex);
-    boost::uuids::uuid u = rg();
-    std::string result = boost::lexical_cast<std::string>(u);
-    return result;
-#endif
+    qpid::types::Uuid uuid(true);
+    return uuid.str();
 }
 
 ConnectionService::ConnectionService(const std::string &url)
@@ -64,7 +38,7 @@ void ConnectionService::AddQueueServer(const std::string &serverAddr, const Serv
     }
 }
 
-void ConnectionService::AddTopicServer(const std::string &serverAddr, const ServerCallback &cb)
+void ConnectionService::AddTopicServer(const std::string &serverAddr, const SubscribeCallback &cb)
 {
     if (!serverAddr.empty() && cb) {
         std::string serverAddress = serverAddr + "; {create:always, node: {type:topic}}";
@@ -213,9 +187,8 @@ void ConnectionService::QueueServerRunning(const std::string &addr, const Server
                     cb(msg, reply);
                     session.acknowledge();
                     const Address &address = msg.getReplyTo();
-                    const std::string &msgid = msg.getMessageId();
-                    if (address && !msgid.empty()) {
-                        reply.setMessageId(msgid);
+                    if (address) {
+                        reply.setMessageId(msg.getMessageId());
                         Sender sender = session.createSender(address);
                         sender.send(reply);
                         sender.close();
@@ -238,7 +211,7 @@ void ConnectionService::QueueServerRunning(const std::string &addr, const Server
     }
 }
 
-void ConnectionService::TopicServerRunning(const std::string &addr, const ServerCallback &cb)
+void ConnectionService::TopicServerRunning(const std::string &addr, const SubscribeCallback &cb)
 {
     Session session = _connection->createSession();
     Receiver receiver = session.createReceiver(addr);
@@ -246,8 +219,7 @@ void ConnectionService::TopicServerRunning(const std::string &addr, const Server
         try {
             Message msg;
             while (receiver.fetch(msg, Duration::SECOND)) {
-                Message reply;
-                cb(msg, reply);
+                cb(msg);
                 session.acknowledge();
             }
         }

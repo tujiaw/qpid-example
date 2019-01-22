@@ -3,6 +3,12 @@
 
 #include <iostream>
 #include <sstream>
+#include <set>
+#include <iomanip>
+#include <time.h>
+#include <stdio.h>
+#include <sys/timeb.h>
+#include <unordered_set>
 
 using namespace qpid::messaging;
 
@@ -10,16 +16,18 @@ int main()
 {
     //ConnectionService server("118.24.4.114:5672", "pingpong");
     ConnectionService server("172.16.66.115:5672");
+    
+#if 1
+    for (int i = 0; i < 2; i++) {
+        server.AddQueueServer("pingpong", [](const Message &msg, Message &reply) {
+            std::cout << std::this_thread::get_id() << " msgid:" << msg.getMessageId() << ",reply:" << msg.getContent() << std::endl;
+            reply = msg;
+        });
+    }
 
-#if 0
-    //server.AddQueueServer("pingpong", [](const Message &msg, Message &reply) {
-    //    std::cout << std::this_thread::get_id() << " msgid:" << msg.getMessageId() << ",reply:" << msg.getContent() << std::endl;
-    //    reply.setContent(msg.getContent());
-    //});
 
-    server.AddTopicServer("ningtotopic", [](const Message &msg, Message &reply) {
+    server.AddTopicServer("ningtotopic", [](const Message &msg) {
         std::cout << std::this_thread::get_id() << " msgid:" << msg.getMessageId() << ",reply:" << msg.getContent() << std::endl;
-        reply.setContent(msg.getContent());
     });
 
 #else

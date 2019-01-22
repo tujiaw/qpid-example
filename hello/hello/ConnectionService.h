@@ -25,6 +25,7 @@ class ConnectionService
 public:
     using ResponseCallback = std::function<void(const QMsgPtr &sendMsg, const QMsgPtr &resMsg)>;
     using ServerCallback = std::function<void(const Message &msg, Message &reply)>;
+    using SubscribeCallback = std::function<void(const Message &msg)>;
 
     struct RequestInfo {
         RequestInfo() 
@@ -53,7 +54,7 @@ public:
     ~ConnectionService();
 
     void AddQueueServer(const std::string &serverAddr, const ServerCallback &cb);
-    void AddTopicServer(const std::string &serverAddr, const ServerCallback &cb);
+    void AddTopicServer(const std::string &serverAddr, const SubscribeCallback &cb);
     bool PostMsg(const std::string &name, const QMsgPtr &msg, int second, const ResponseCallback &cb);
     bool SendMsg(const std::string &name, const Message &requestMsg, Message &responseMsg, int milliseconds = 1000);
     bool PublishMsg(const std::string &topic, const Message &msg);
@@ -65,7 +66,7 @@ private:
     void ReceiveRunning();
     void TimeoutRunning();
     void QueueServerRunning(const std::string &addr, const ServerCallback &cb);
-    void TopicServerRunning(const std::string &addr, const ServerCallback &cb);
+    void TopicServerRunning(const std::string &addr, const SubscribeCallback &cb);
 
     Sender& GetSender(const std::string &name, const std::string &nodeType);
 
