@@ -3,6 +3,7 @@
 #include "qpid/messaging/Address.h"
 #include "qpid/types/Uuid.h"
 #include <iostream>
+#include <assert.h>
 
 time_t GetCurrentTimeSec()
 {
@@ -82,7 +83,9 @@ void ConnectionService::Close()
 
     try {
         for (auto iter = _senderCache.begin(); iter != _senderCache.end(); ++iter) {
-            iter->second.close();
+            if (iter->second.isValid()) {
+                iter->second.close();
+            }
         }
 
         if (_asyncReceiver) {
@@ -137,6 +140,7 @@ void ConnectionService::ReceiveRunning()
             }
         } catch (const std::exception& error) {
             std::cerr << "ConnectionService::ReceiveRunning error:" << error.what();
+            break;
         }
     }
 }
@@ -298,15 +302,17 @@ Sender& ConnectionService::GetSender(const std::string &name, const std::string 
         try {
             std::string address = name;
             if (nodeType == "queue") {
-                address += "; {create:always, node: {type:queue}}";
+                //address += "; {create:always, delete:always, node: {type:queue, x-declare:{auto-delete:true}}}"; // ·Ç³Ö¾Ã
+                address += "; {create:always, node: {type:queue}}"; // ³Ö¾Ã
             } else if (nodeType == "topic") {
-                address += "; {create:always, node: {type:topic}}";
+                address += "; {create: always , node:{type:topic , x-declare:{type:fanout}}}";
             } else {
                 std::cerr << "AddSender error, node type error:" << nodeType;
                 return _emptySender;
             }
 
             Sender sender = _session.createSender(address);
+            assert(sender.isValid());
             _senderCache[name] = sender;
             return _senderCache[name];
         }
