@@ -17,10 +17,10 @@ int main()
     ConnectionService server("172.16.66.115:5672");
     
 #if 0
-    //server.AddQueueServer("pingpong", [](const Message &msg, Message &reply) {
-    //    std::cout << std::this_thread::get_id() << " msgid:" << msg.getMessageId() << ",reply:" << msg.getContent() << std::endl;
-    //    reply = msg;
-    //});
+    server.AddQueueServer("pingpong", [](const Message &msg, Message &reply) {
+        std::cout << std::this_thread::get_id() << " msgid:" << msg.getMessageId() << ",reply:" << msg.getContent() << std::endl;
+        reply = msg;
+    });
 
 
     server.AddTopicServer("ningtotopic", [](const Message &msg) {
