@@ -34,7 +34,7 @@ int main()
         std::this_thread::sleep_for(std::chrono::seconds(1));
         qpid::types::Variant::Map mp;
         mp["1"] = "111111";
-        mp["2"] = "sumscope";
+        mp["2"] = "test";
         mp["3"] = 200;
 
         QMsgPtr msg(new Message());
